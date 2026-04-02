@@ -2,13 +2,29 @@
 
 Public repo: https://github.com/oliynykmax/kort-pi-config
 
-## One-line prompt for an LLM
+## One-line prompt for an LLM (for installing this config)
 
 Copy and send this to your LLM:
 
 ```text
-Update my pi extensions in https://github.com/oliynykmax/kort-pi-config by running /home/kort/kort-pi-config/scripts/sync-extensions.sh, verify no secrets are included, then commit and push.
+Install pi extensions from https://github.com/oliynykmax/kort-pi-config: clone the repo, copy extensions/ into ~/.pi/agent/extensions/, and restart pi.
 ```
+
+## One-line prompt for an LLM (for repo owner updates)
+
+Use this only for maintaining this repo:
+
+```text
+Sync my local pi extensions to https://github.com/oliynykmax/kort-pi-config by running /home/kort/kort-pi-config/scripts/sync-extensions.sh, check for secrets, then commit and push.
+```
+
+## Extensions in this config
+
+- plan-mode
+- self-update
+- session-name
+- todo
+- trigger-compact
 
 ## Manual install
 
