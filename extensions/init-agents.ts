@@ -14,7 +14,24 @@ type RepoFacts = {
   evidence: string[];
 };
 
+let pendingInitContext: string | undefined;
+
 export default function initAgentsExtension(pi: ExtensionAPI) {
+  pi.on("before_agent_start", async () => {
+    if (!pendingInitContext) return;
+
+    const content = pendingInitContext;
+    pendingInitContext = undefined;
+
+    return {
+      message: {
+        customType: "init-agents-context",
+        content,
+        display: false,
+      },
+    };
+  });
+
   pi.registerCommand("init", {
     description: "Guided AGENTS.md setup (agent-driven)",
     handler: async (args, ctx) => {
@@ -22,10 +39,10 @@ export default function initAgentsExtension(pi: ExtensionAPI) {
       const facts = await scanRepo(pi, ctx.cwd);
       const answers = await askTargetedQuestions(ctx, facts);
 
-      const prompt = buildInitPrompt({ userFocus, facts, answers });
-      pi.sendUserMessage(prompt);
+      pendingInitContext = buildInitPrompt({ userFocus, facts, answers });
+      pi.sendUserMessage("Initialize AGENTS.md for this repository.");
 
-      ctx.ui.notify("Started guided /init. Agent will analyze repo and create/update AGENTS.md.", "info");
+      ctx.ui.notify("Started guided /init.", "info");
     },
   });
 }
@@ -112,16 +129,16 @@ async function askTargetedQuestions(
 
   // Only ask when critical information is not derivable from repo.
   if (facts.unknowns.includes("project-purpose")) {
-    await ask("What is the project purpose in 1-2 lines?");
+    await ask("Project purpose in 1-2 lines?");
   }
   if (facts.unknowns.includes("validation-command")) {
-    await ask("What is the main validation command agents should run?");
+    await ask("Main validation command agents must run?");
   }
-  if (facts.unknowns.includes("startup-command")) {
-    await ask("What is the main local run/dev command?");
+  if (facts.unknowns.includes("startup-command") && qa.length < 2) {
+    await ask("Main local dev/start command?");
   }
 
-  return qa.slice(0, 3);
+  return qa.slice(0, 2);
 }
 
 function buildInitPrompt(input: {
@@ -148,39 +165,25 @@ function buildInitPrompt(input: {
     ? answers.map((x) => `- ${x.question} ${x.answer}`).join("\n")
     : "- none";
 
-  return `Create or update AGENTS.md for this repository.
+  return `Run guided /init for AGENTS.md.
 
-User focus:
-${userFocus || "(none)"}
+Focus: ${userFocus || "(none)"}
 
-Pre-scan facts (already derived from repository):
+Repo facts:
 ${observed}
 
 Discovered commands:
 ${commandList}
 
-User clarifications for missing critical bits:
+User clarifications:
 ${answered}
 
-Execution requirements:
-1) Re-read the highest-value repo sources first (README, manifests, scripts, CI, existing instruction files).
-2) Extract only high-signal, repo-specific guidance agents would otherwise miss.
-3) Keep AGENTS.md compact and operational.
-4) If important gaps remain after reading files and the clarifications above, ask one short batch of targeted questions (max 3) using questionnaire.
-5) Then write AGENTS.md at repo root (improve existing file in place if present).
-
-Content requirements:
-- Exact commands (build/test/lint/typecheck/dev), including focused variants when possible.
-- Real package/module boundaries and entrypoints.
-- Order-dependent workflows when relevant.
-- Toolchain quirks (codegen/migrations/env bootstrapping/artifacts).
-- Project-specific conventions that differ from defaults.
-
-Do not include:
-- Generic advice
-- Speculative claims
-- Secrets/tokens
-- Long explanations
+Now do this:
+- Read high-value sources first (README, manifests, scripts, CI, existing instruction files).
+- Keep only high-signal, repo-specific guidance agents would likely miss.
+- If critical gaps still remain, ask one short batch of targeted questions (max 2).
+- Create/update AGENTS.md at repo root (improve in place, keep useful existing guidance).
+- Keep AGENTS.md compact, direct, no fluff, no secrets, no speculation.
 `;
 }
 
