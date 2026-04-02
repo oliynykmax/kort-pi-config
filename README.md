@@ -1,7 +1,5 @@
 # kort-pi-config
 
-Public repo: https://github.com/oliynykmax/kort-pi-config
-
 ## One-line prompt for an LLM (for installing this config)
 
 Copy and send this to your LLM:
