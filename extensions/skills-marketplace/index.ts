@@ -1,6 +1,7 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { matchesKey, Text, truncateToWidth } from "@mariozechner/pi-tui";
 
 const CACHE_DIR = path.join(process.env.HOME || "~", ".pi/agent/skills-cache");
 const SKILLS_DIR = path.join(process.env.HOME || "~", ".pi/agent/skills");
@@ -26,48 +27,13 @@ interface SkillEntry {
 }
 
 const KNOWN_REPOS: SkillRepo[] = [
-  {
-    name: "pi-skills",
-    url: "https://github.com/badlogic/pi-skills",
-    description: "Official pi skills by Mario Zechner",
-    adapter: "flat",
-  },
-  {
-    name: "agent-skills-hub",
-    url: "https://github.com/agent-skills-hub/agent-skills-hub",
-    description: "Cross-platform agent skills hub",
-    adapter: "flat",
-  },
-  {
-    name: "agent-stuff",
-    url: "https://github.com/mitsuhiko/agent-stuff",
-    description: "Skills and extensions by mitsuhiko",
-    adapter: "flat",
-  },
-  {
-    name: "pi-amplike",
-    url: "https://github.com/pasky/pi-amplike",
-    description: "Pi skills for web search and extraction",
-    adapter: "flat",
-  },
-  {
-    name: "claude-skills",
-    url: "https://github.com/alirezarezvani/claude-skills",
-    description: "220+ engineering, marketing, product, and advisory skills",
-    adapter: "domain-nested",
-  },
-  {
-    name: "openai-skills",
-    url: "https://github.com/openai/skills",
-    description: "Official OpenAI curated skills for Codex",
-    adapter: "openai-curated",
-  },
-  {
-    name: "jezweb-skills",
-    url: "https://github.com/jezweb/claude-skills",
-    description: "60+ Cloudflare, frontend, integrations, and dev-tools skills",
-    adapter: "plugin-nested",
-  },
+  { name: "pi-skills", url: "https://github.com/badlogic/pi-skills", description: "Official pi skills by Mario Zechner", adapter: "flat" },
+  { name: "agent-skills-hub", url: "https://github.com/agent-skills-hub/agent-skills-hub", description: "Cross-platform agent skills hub", adapter: "flat" },
+  { name: "agent-stuff", url: "https://github.com/mitsuhiko/agent-stuff", description: "Skills and extensions by mitsuhiko", adapter: "flat" },
+  { name: "pi-amplike", url: "https://github.com/pasky/pi-amplike", description: "Pi skills for web search and extraction", adapter: "flat" },
+  { name: "claude-skills", url: "https://github.com/alirezarezvani/claude-skills", description: "220+ engineering, marketing, product, and advisory skills", adapter: "domain-nested" },
+  { name: "openai-skills", url: "https://github.com/openai/skills", description: "Official OpenAI curated skills for Codex", adapter: "openai-curated" },
+  { name: "jezweb-skills", url: "https://github.com/jezweb/claude-skills", description: "60+ Cloudflare, frontend, integrations, and dev-tools skills", adapter: "plugin-nested" },
 ];
 
 async function ensureDir(dir: string): Promise<void> {
@@ -76,11 +42,7 @@ async function ensureDir(dir: string): Promise<void> {
 
 async function cloneOrUpdateRepo(pi: ExtensionAPI, repo: SkillRepo): Promise<boolean> {
   const repoDir = path.join(CACHE_DIR, repo.name);
-  const exists = await fs
-    .access(path.join(repoDir, ".git"))
-    .then(() => true)
-    .catch(() => false);
-
+  const exists = await fs.access(path.join(repoDir, ".git")).then(() => true).catch(() => false);
   if (exists) {
     const result = await pi.exec("git", ["-C", repoDir, "pull", "--ff-only"], { timeout: 30000 });
     return result.code === 0;
@@ -134,9 +96,7 @@ async function rewriteSkillContent(skillDir: string): Promise<void> {
     if (changed) {
       await fs.writeFile(skillMdPath, content, "utf8");
     }
-  } catch {
-    // Ignore errors rewriting content
-  }
+  } catch { /* ignore */ }
 }
 
 async function makeSkillEntry(repoName: string, repoUrl: string, skillDir: string, entryName: string, category?: string): Promise<SkillEntry | null> {
@@ -254,27 +214,11 @@ async function discoverSkillsInRepo(repo: SkillRepo): Promise<SkillEntry[]> {
   const exists = await fs.access(repoDir).then(() => true).catch(() => false);
   if (!exists) return [];
   switch (repo.adapter) {
-    case "domain-nested":
-      return discoverDomainNestedSkills(repoDir, repo.name, repo.url);
-    case "openai-curated":
-      return discoverOpenAICuratedSkills(repoDir, repo.name, repo.url);
-    case "plugin-nested":
-      return discoverPluginNestedSkills(repoDir, repo.name, repo.url);
-    default:
-      return discoverFlatSkills(repoDir, repo.name, repo.url);
+    case "domain-nested": return discoverDomainNestedSkills(repoDir, repo.name, repo.url);
+    case "openai-curated": return discoverOpenAICuratedSkills(repoDir, repo.name, repo.url);
+    case "plugin-nested": return discoverPluginNestedSkills(repoDir, repo.name, repo.url);
+    default: return discoverFlatSkills(repoDir, repo.name, repo.url);
   }
-}
-
-async function updateCache(pi: ExtensionAPI): Promise<{ success: number; failed: number }> {
-  await ensureDir(CACHE_DIR);
-  let success = 0;
-  let failed = 0;
-  for (const repo of KNOWN_REPOS) {
-    const ok = await cloneOrUpdateRepo(pi, repo);
-    if (ok) success++;
-    else failed++;
-  }
-  return { success, failed };
 }
 
 async function loadAllSkills(): Promise<SkillEntry[]> {
@@ -286,61 +230,411 @@ async function loadAllSkills(): Promise<SkillEntry[]> {
   return allSkills;
 }
 
-async function installSkill(pi: ExtensionAPI, skill: SkillEntry): Promise<boolean> {
-  const targetPath = path.join(SKILLS_DIR, path.basename(skill.cachePath));
-  await ensureDir(SKILLS_DIR);
-  const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
-  return result.code === 0;
-}
+// Fuzzy matching — fzf-style algorithm
+function fuzzyMatch(text: string, pattern: string): { score: number; positions: number[] } | null {
+  if (!pattern) return { score: 0, positions: [] };
+  const textLen = text.length;
+  const patternLen = pattern.length;
+  if (patternLen === 0) return { score: 0, positions: [] };
+  if (patternLen > textLen) return null;
 
-async function uninstallSkill(pi: ExtensionAPI, skill: SkillEntry): Promise<boolean> {
-  if (!skill.installPath) return false;
-  const result = await pi.exec("rm", ["-rf", skill.installPath], { timeout: 10000 });
-  return result.code === 0;
-}
+  const textLower = text.toLowerCase();
+  const patternLower = pattern.toLowerCase();
 
-function fuzzyScore(text: string, query: string): number {
-  let score = 0;
-  let textIdx = 0;
-  for (let i = 0; i < query.length; i++) {
-    const found = text.indexOf(query[i], textIdx);
-    if (found === -1) return 0;
-    score += found === textIdx ? 2 : 1;
-    textIdx = found + 1;
+  // Check if all characters exist in order
+  let ti = 0;
+  const positions: number[] = [];
+  for (let pi = 0; pi < patternLen; pi++) {
+    const found = textLower.indexOf(patternLower[pi], ti);
+    if (found === -1) return null;
+    positions.push(found);
+    ti = found + 1;
   }
-  return score;
+
+  // Score: consecutive matches, start of word, start of text
+  let score = 0;
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    // Consecutive bonus
+    if (i > 0 && pos === positions[i - 1] + 1) {
+      score += 3;
+    }
+    // Start of word bonus (after space, hyphen, underscore, slash, or uppercase)
+    if (pos === 0) {
+      score += 5;
+    } else {
+      const prev = text[pos - 1];
+      if (prev === " " || prev === "-" || prev === "_" || prev === "/" || prev === ".") {
+        score += 4;
+      } else if (text[pos] >= "A" && text[pos] <= "Z" && text[pos - 1] >= "a" && text[pos - 1] <= "z") {
+        score += 3;
+      }
+    }
+    // Exact case match bonus
+    if (text[pos] === patternLower[i]) {
+      score += 1;
+    }
+  }
+
+  // Penalize gaps
+  const firstGap = positions[0];
+  score -= firstGap;
+  if (positions.length > 1) {
+    const lastGap = positions[positions.length - 1] - positions[0] - positions.length + 1;
+    score -= lastGap * 0.5;
+  }
+
+  return { score, positions };
 }
 
-function filterSkills(skills: SkillEntry[], query: string): SkillEntry[] {
+function fuzzySearchSkills(skills: SkillEntry[], query: string): SkillEntry[] {
   if (!query.trim()) return skills;
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const words = query.trim().split(/\s+/).filter(Boolean);
+
   const scored = skills
     .map((skill) => {
-      const searchable = [
-        { text: skill.name.toLowerCase(), weight: 10 },
-        { text: skill.repo.toLowerCase(), weight: 5 },
-        { text: skill.description.toLowerCase(), weight: 2 },
-        ...(skill.tags?.map((t) => ({ text: t.toLowerCase(), weight: 3 })) || []),
-        ...(skill.category ? [{ text: skill.category.toLowerCase(), weight: 4 }] : []),
+      const searchFields = [
+        { text: skill.name, weight: 20 },
+        { text: skill.category || "", weight: 10 },
+        { text: skill.repo, weight: 8 },
+        { text: skill.description, weight: 3 },
+        ...(skill.tags?.map((t) => ({ text: t, weight: 5 })) || []),
       ];
+
       let totalScore = 0;
+      let allWordsMatched = true;
+
       for (const word of words) {
-        let wordMatched = false;
-        for (const field of searchable) {
-          const s = fuzzyScore(field.text, word);
-          if (s > 0) {
-            totalScore += s * field.weight;
-            wordMatched = true;
+        let bestWordScore = -Infinity;
+        for (const field of searchFields) {
+          if (!field.text) continue;
+          const result = fuzzyMatch(field.text, word);
+          if (result && result.score * field.weight > bestWordScore) {
+            bestWordScore = result.score * field.weight;
           }
         }
-        if (!wordMatched) return { skill, score: 0 };
+        if (bestWordScore === -Infinity) {
+          allWordsMatched = false;
+          break;
+        }
+        totalScore += bestWordScore;
       }
-      return { skill, score: totalScore };
+
+      return allWordsMatched ? { skill, score: totalScore } : null;
     })
-    .filter((x) => x.score > 0)
+    .filter((x): x is { skill: SkillEntry; score: number } => x !== null)
     .sort((a, b) => b.score - a.score)
     .map((x) => x.skill);
+
   return scored;
+}
+
+// TUI Component for fuzzy search
+class MarketplaceSearchComponent {
+  private skills: SkillEntry[];
+  private theme: Theme;
+  private onDone: (action: "install" | "uninstall" | "cancel", skill?: SkillEntry) => void;
+  private pi: ExtensionAPI;
+  private query = "";
+  private cursorPos = 0;
+  private selectedIndex = 0;
+  private scrollOffset = 0;
+  private filteredSkills: SkillEntry[] = [];
+  private mode: "search" | "detail" | "confirm" = "search";
+  private detailSkill: SkillEntry | null = null;
+  private detailPreview: string = "";
+  private cachedWidth?: number;
+  private cachedLines?: string[];
+
+  constructor(skills: SkillEntry[], theme: Theme, pi: ExtensionAPI, onDone: (action: "install" | "uninstall" | "cancel", skill?: SkillEntry) => void) {
+    this.skills = skills;
+    this.theme = theme;
+    this.pi = pi;
+    this.onDone = onDone;
+    this.filteredSkills = skills;
+  }
+
+  handleInput(data: string): void {
+    if (this.mode === "confirm") {
+      if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+        this.mode = "search";
+        this.invalidate();
+        return;
+      }
+      if (matchesKey(data, "enter")) {
+        if (this.detailSkill) {
+          const action = this.detailSkill.installed ? "uninstall" : "install";
+          this.onDone(action, this.detailSkill);
+        }
+        return;
+      }
+      return;
+    }
+
+    if (this.mode === "detail") {
+      if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
+        this.mode = "search";
+        this.detailSkill = null;
+        this.invalidate();
+        return;
+      }
+      if (matchesKey(data, "enter")) {
+        if (this.detailSkill) {
+          const action = this.detailSkill.installed ? "uninstall" : "install";
+          this.onDone(action, this.detailSkill);
+        }
+        return;
+      }
+      return;
+    }
+
+    // Search mode
+    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+      this.onDone("cancel");
+      return;
+    }
+
+    if (matchesKey(data, "enter")) {
+      if (this.filteredSkills.length > 0 && this.selectedIndex < this.filteredSkills.length) {
+        const skill = this.filteredSkills[this.selectedIndex];
+        this.mode = "detail";
+        this.detailSkill = skill;
+        this.loadPreview(skill);
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
+      if (this.selectedIndex > 0) {
+        this.selectedIndex--;
+        if (this.selectedIndex < this.scrollOffset) {
+          this.scrollOffset = this.selectedIndex;
+        }
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
+      if (this.selectedIndex < this.filteredSkills.length - 1) {
+        this.selectedIndex++;
+        if (this.selectedIndex >= this.scrollOffset + 10) {
+          this.scrollOffset = this.selectedIndex - 9;
+        }
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "tab")) {
+      // Auto-complete from top result
+      if (this.filteredSkills.length > 0) {
+        const top = this.filteredSkills[0];
+        const remaining = top.name.slice(this.cursorPos);
+        if (remaining) {
+          this.query = this.query.slice(0, this.cursorPos) + remaining + this.query.slice(this.cursorPos);
+          this.cursorPos += remaining.length;
+          this.doFilter();
+          this.invalidate();
+        }
+      }
+      return;
+    }
+
+    if (matchesKey(data, "backspace") || data === "\x7f") {
+      if (this.cursorPos > 0) {
+        this.query = this.query.slice(0, this.cursorPos - 1) + this.query.slice(this.cursorPos);
+        this.cursorPos--;
+        this.doFilter();
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "left")) {
+      if (this.cursorPos > 0) {
+        this.cursorPos--;
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "right")) {
+      if (this.cursorPos < this.query.length) {
+        this.cursorPos++;
+        this.invalidate();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "ctrl+u")) {
+      this.query = "";
+      this.cursorPos = 0;
+      this.doFilter();
+      this.invalidate();
+      return;
+    }
+
+    if (matchesKey(data, "ctrl+w")) {
+      const before = this.query.slice(0, this.cursorPos);
+      const trimmed = before.trimEnd();
+      const wordStart = trimmed.lastIndexOf(" ");
+      const newCursorPos = wordStart === -1 ? 0 : wordStart + 1;
+      this.query = this.query.slice(0, newCursorPos) + this.query.slice(this.cursorPos);
+      this.cursorPos = newCursorPos;
+      this.doFilter();
+      this.invalidate();
+      return;
+    }
+
+    // Regular character input
+    if (data.length === 1 && data >= " ") {
+      this.query = this.query.slice(0, this.cursorPos) + data + this.query.slice(this.cursorPos);
+      this.cursorPos++;
+      this.doFilter();
+      this.invalidate();
+    }
+  }
+
+  private doFilter(): void {
+    this.filteredSkills = fuzzySearchSkills(this.skills, this.query);
+    this.selectedIndex = Math.min(this.selectedIndex, this.filteredSkills.length - 1);
+    if (this.selectedIndex < 0) this.selectedIndex = 0;
+    this.scrollOffset = 0;
+  }
+
+  private async loadPreview(skill: SkillEntry): Promise<void> {
+    try {
+      const content = await fs.readFile(path.join(skill.cachePath, "SKILL.md"), "utf8");
+      this.detailPreview = content.split("\n").slice(0, 20).join("\n");
+    } catch {
+      this.detailPreview = "Could not read skill details.";
+    }
+    this.invalidate();
+  }
+
+  render(width: number): string[] {
+    if (this.cachedLines && this.cachedWidth === width) {
+      return this.cachedLines;
+    }
+
+    const lines: string[] = [];
+    const th = this.theme;
+
+    if (this.mode === "detail" && this.detailSkill) {
+      return this.renderDetail(width, th);
+    }
+
+    if (this.mode === "confirm" && this.detailSkill) {
+      return this.renderConfirm(width, th);
+    }
+
+    // Header
+    lines.push("");
+    lines.push(truncateToWidth(th.fg("accent", " Skills Marketplace ") + th.fg("dim", ` — ${this.skills.length} skills total`), width));
+    lines.push("");
+
+    // Search bar
+    const prompt = th.fg("accent", "❯ ");
+    const beforeCursor = th.fg("text", this.query.slice(0, this.cursorPos));
+    const afterCursor = th.fg("dim", this.query.slice(this.cursorPos));
+    const cursor = th.fg("accent", th.bold(this.query[this.cursorPos] || " "));
+    const searchBar = prompt + beforeCursor + cursor + afterCursor;
+    lines.push(truncateToWidth(searchBar, width));
+
+    // Results count
+    if (this.query) {
+      lines.push(th.fg("dim", `${this.filteredSkills.length} match${this.filteredSkills.length !== 1 ? "es" : ""} — ↑↓ navigate, Enter select, Tab complete, Esc quit`));
+    } else {
+      lines.push(th.fg("dim", `${this.filteredSkills.length} skills — Type to search, ↑↓ navigate, Enter select, Tab complete, Esc quit`));
+    }
+    lines.push("");
+
+    // Results list
+    const visibleCount = Math.min(12, this.filteredSkills.length);
+    const startIdx = this.scrollOffset;
+    const endIdx = Math.min(startIdx + visibleCount, this.filteredSkills.length);
+
+    for (let i = startIdx; i < endIdx; i++) {
+      const skill = this.filteredSkills[i];
+      const isSelected = i === this.selectedIndex;
+      const status = skill.installed ? th.fg("success", "✓") : th.fg("dim", "○");
+      const arrow = isSelected ? th.fg("accent", "▸ ") : "  ";
+      const name = isSelected ? th.fg("accent", th.bold(skill.name)) : th.fg("text", skill.name);
+      const repo = th.fg("muted", `(${skill.repo}${skill.category ? "/" + skill.category : ""})`);
+      const desc = th.fg("dim", skill.description);
+
+      lines.push(truncateToWidth(arrow + status + " " + name + " " + repo, width));
+      lines.push(truncateToWidth("    " + desc, width));
+      lines.push("");
+    }
+
+    if (this.filteredSkills.length === 0 && this.query) {
+      lines.push(th.fg("dim", "  No matches found. Try different keywords."));
+      lines.push("");
+    }
+
+    lines.push(th.fg("dim", "  Press Escape to exit"));
+    lines.push("");
+
+    this.cachedWidth = width;
+    this.cachedLines = lines;
+    return lines;
+  }
+
+  private renderDetail(width: number, th: Theme): string[] {
+    const lines: string[] = [];
+    const skill = this.detailSkill!;
+
+    lines.push("");
+    lines.push(truncateToWidth(th.fg("accent", th.bold(` ${skill.name} `)), width));
+    lines.push(th.fg("muted", `  ${skill.repo}${skill.category ? "/" + skill.category : ""}  •  ${skill.installed ? th.fg("success", "Installed") : "Not installed"}`));
+    lines.push("");
+
+    if (skill.tags?.length) {
+      lines.push(th.fg("dim", `  Tags: ${skill.tags.join(", ")}`));
+      lines.push("");
+    }
+
+    // Preview
+    const previewLines = this.detailPreview.split("\n").slice(0, 15);
+    for (const line of previewLines) {
+      lines.push(truncateToWidth(th.fg("muted", "  " + line), width));
+    }
+
+    lines.push("");
+    const action = skill.installed ? th.fg("warning", "Uninstall") : th.fg("success", "Install");
+    lines.push(th.fg("dim", `  Press Enter to ${action.toLowerCase()} • Esc to go back`));
+    lines.push("");
+
+    this.cachedWidth = width;
+    this.cachedLines = lines;
+    return lines;
+  }
+
+  private renderConfirm(width: number, th: Theme): string[] {
+    const lines: string[] = [];
+    const skill = this.detailSkill!;
+    const action = skill.installed ? "uninstall" : "install";
+
+    lines.push("");
+    lines.push(truncateToWidth(th.fg("warning", th.bold(` Confirm ${action} `)), width));
+    lines.push("");
+    lines.push(truncateToWidth(th.fg("text", `  ${skill.name} (${skill.repo})`), width));
+    lines.push("");
+    lines.push(th.fg("dim", `  Press Enter to confirm • Esc to cancel`));
+    lines.push("");
+
+    this.cachedWidth = width;
+    this.cachedLines = lines;
+    return lines;
+  }
+
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
 }
 
 export default function skillsMarketplace(pi: ExtensionAPI) {
@@ -356,6 +650,18 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
     cachedSkills = null;
   }
 
+  async function updateCache(): Promise<{ success: number; failed: number }> {
+    await ensureDir(CACHE_DIR);
+    let success = 0;
+    let failed = 0;
+    for (const repo of KNOWN_REPOS) {
+      const ok = await cloneOrUpdateRepo(pi, repo);
+      if (ok) success++;
+      else failed++;
+    }
+    return { success, failed };
+  }
+
   pi.registerCommand("marketplace", {
     description: "Browse, search, and install skills from multiple repositories",
     handler: async (args: string, ctx: ExtensionContext) => {
@@ -363,12 +669,9 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
 
       if (trimmedArgs === "update") {
         ctx.ui.notify("Updating skills cache...", "info");
-        const result = await updateCache(pi);
+        const result = await updateCache();
         invalidateCache();
-        ctx.ui.notify(
-          `Cache updated: ${result.success} repos succeeded, ${result.failed} failed.\nRestart pi or run /reload to see new skills.`,
-          result.failed === 0 ? "success" : "info"
-        );
+        ctx.ui.notify(`Cache updated: ${result.success} repos succeeded, ${result.failed} failed.\nRestart pi or run /reload to see new skills.`, result.failed === 0 ? "success" : "info");
         return;
       }
 
@@ -376,22 +679,14 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         const skillName = trimmedArgs.slice(8).trim();
         const skills = await getSkills();
         const skill = skills.find((s) => s.id === skillName || s.name.toLowerCase() === skillName.toLowerCase());
-        if (!skill) {
-          ctx.ui.notify(`Skill '${skillName}' not found. Run /marketplace update first.`, "error");
-          return;
-        }
-        if (skill.installed) {
-          ctx.ui.notify(`Skill '${skill.name}' is already installed.`, "info");
-          return;
-        }
+        if (!skill) { ctx.ui.notify(`Skill '${skillName}' not found. Run /marketplace update first.`, "error"); return; }
+        if (skill.installed) { ctx.ui.notify(`Skill '${skill.name}' is already installed.`, "info"); return; }
         ctx.ui.notify(`Installing '${skill.name}'...`, "info");
-        const ok = await installSkill(pi, skill);
-        if (ok) {
-          ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success");
-          invalidateCache();
-        } else {
-          ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error");
-        }
+        const targetPath = path.join(SKILLS_DIR, path.basename(skill.cachePath));
+        await ensureDir(SKILLS_DIR);
+        const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
+        if (result.code === 0) { ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success"); invalidateCache(); }
+        else { ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error"); }
         return;
       }
 
@@ -399,40 +694,11 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         const skillName = trimmedArgs.slice(10).trim();
         const skills = await getSkills();
         const skill = skills.find((s) => s.id === skillName || s.name.toLowerCase() === skillName.toLowerCase());
-        if (!skill || !skill.installed) {
-          ctx.ui.notify(`Skill '${skillName}' is not installed.`, "error");
-          return;
-        }
+        if (!skill || !skill.installPath) { ctx.ui.notify(`Skill '${skillName}' is not installed.`, "error"); return; }
         ctx.ui.notify(`Uninstalling '${skill.name}'...`, "info");
-        const ok = await uninstallSkill(pi, skill);
-        if (ok) {
-          ctx.ui.notify(`✓ Uninstalled '${skill.name}'`, "success");
-          invalidateCache();
-        } else {
-          ctx.ui.notify(`✗ Failed to uninstall '${skill.name}'`, "error");
-        }
-        return;
-      }
-
-      if (trimmedArgs.startsWith("search ")) {
-        const query = trimmedArgs.slice(7).trim();
-        const skills = await getSkills();
-        const filtered = filterSkills(skills, query);
-        if (filtered.length === 0) {
-          ctx.ui.notify(`No skills found for '${query}'.\nRun /marketplace update to refresh cache.`, "info");
-          return;
-        }
-        const lines = [`Search results for '${query}':`, ""];
-        for (const skill of filtered) {
-          const status = skill.installed ? "✓" : " ";
-          const cat = skill.category ? `/${skill.category}` : "";
-          lines.push(`${status} ${skill.name} (${skill.repo}${cat})`);
-          lines.push(`   ${skill.description}`);
-          lines.push(`   Install: /marketplace install ${skill.id}`);
-          lines.push("");
-        }
-        lines.push(`Found ${filtered.length} skill(s)`);
-        ctx.ui.notify(lines.join("\n"), "info");
+        const result = await pi.exec("rm", ["-rf", skill.installPath], { timeout: 10000 });
+        if (result.code === 0) { ctx.ui.notify(`✓ Uninstalled '${skill.name}'`, "success"); invalidateCache(); }
+        else { ctx.ui.notify(`✗ Failed to uninstall '${skill.name}'`, "error"); }
         return;
       }
 
@@ -441,167 +707,60 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         const installed = skills.filter((s) => s.installed);
         const available = skills.filter((s) => !s.installed);
         const lines = ["Skills Marketplace", ""];
-        if (installed.length > 0) {
-          lines.push("Installed:");
-          for (const skill of installed) {
-            lines.push(`  ✓ ${skill.name} (${skill.repo})`);
-          }
-          lines.push("");
-        }
-        if (available.length > 0) {
-          lines.push(`Available (${available.length}):`);
-          for (const skill of available.slice(0, 20)) {
-            lines.push(`    ${skill.name} (${skill.repo})`);
-            lines.push(`    ${skill.description}`);
-          }
-          if (available.length > 20) {
-            lines.push(`  ... and ${available.length - 20} more`);
-          }
-          lines.push("");
-        }
+        if (installed.length > 0) { lines.push("Installed:"); for (const s of installed) lines.push(`  ✓ ${s.name} (${s.repo})`); lines.push(""); }
+        if (available.length > 0) { lines.push(`Available (${available.length}):`); for (const s of available.slice(0, 20)) { lines.push(`    ${s.name} (${s.repo})`); lines.push(`    ${s.description}`); } if (available.length > 20) lines.push(`  ... and ${available.length - 20} more`); lines.push(""); }
         lines.push("Commands:");
-        lines.push("  /marketplace search <query> - Search skills");
-        lines.push("  /marketplace install <id>   - Install a skill");
+        lines.push("  /marketplace              - Interactive fuzzy search");
+        lines.push("  /marketplace search <q>   - Search skills");
+        lines.push("  /marketplace install <id> - Install a skill");
         lines.push("  /marketplace uninstall <id> - Uninstall a skill");
-        lines.push("  /marketplace update           - Refresh cache");
-        lines.push("  /marketplace list             - List all skills");
+        lines.push("  /marketplace update       - Refresh cache");
+        lines.push("  /marketplace list         - List all skills");
         ctx.ui.notify(lines.join("\n"), "info");
         return;
       }
 
-      // Interactive mode
+      // Interactive fuzzy search
       const skills = await getSkills();
       if (skills.length === 0) {
         ctx.ui.notify("Skills cache is empty.\n\nRun: /marketplace update\n\nThis will clone skill repositories and index all available skills.", "info");
         return;
       }
-      const installed = skills.filter((s) => s.installed);
-      const available = skills.filter((s) => !s.installed);
-      const choice = await ctx.ui.select(
-        `Skills Marketplace (${installed.length} installed, ${available.length} available)`,
-        ["Browse available skills", "View installed skills", "Search skills", "Update cache", "Cancel"]
-      );
-      if (!choice || choice === "Cancel") return;
-      if (choice === "Update cache") {
-        ctx.ui.notify("Updating skills cache...", "info");
-        const result = await updateCache(pi);
-        invalidateCache();
-        ctx.ui.notify(`Cache updated: ${result.success} repos succeeded, ${result.failed} failed.`, result.failed === 0 ? "success" : "info");
-        return;
-      }
-      if (choice === "View installed skills") {
-        if (installed.length === 0) {
-          ctx.ui.notify("No skills installed yet.", "info");
-          return;
-        }
-        const skillNames = installed.map((s) => `${s.name} (${s.repo})`);
-        const selected = await ctx.ui.select("Installed skills (select to uninstall):", [...skillNames, "Back"]);
-        if (!selected || selected === "Back") return;
-        const idx = skillNames.indexOf(selected);
-        if (idx >= 0) {
-          const skill = installed[idx];
-          const confirm = await ctx.ui.confirm(`Uninstall '${skill.name}'?`, "This will remove the skill from your installation.");
-          if (confirm) {
-            const ok = await uninstallSkill(pi, skill);
-            if (ok) {
-              ctx.ui.notify(`✓ Uninstalled '${skill.name}'`, "success");
-              invalidateCache();
-            } else {
-              ctx.ui.notify(`✗ Failed to uninstall '${skill.name}'`, "error");
+
+      await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+        return new MarketplaceSearchComponent(skills, theme, pi, async (action, skill) => {
+          if (action === "cancel") {
+            done();
+            return;
+          }
+
+          if (skill) {
+            const targetPath = path.join(SKILLS_DIR, path.basename(skill.cachePath));
+            await ensureDir(SKILLS_DIR);
+
+            if (action === "install") {
+              ctx.ui.notify(`Installing '${skill.name}'...`, "info");
+              const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
+              if (result.code === 0) {
+                ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success");
+                invalidateCache();
+              } else {
+                ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error");
+              }
+            } else if (action === "uninstall" && skill.installPath) {
+              ctx.ui.notify(`Uninstalling '${skill.name}'...`, "info");
+              const result = await pi.exec("rm", ["-rf", skill.installPath], { timeout: 10000 });
+              if (result.code === 0) {
+                ctx.ui.notify(`✓ Uninstalled '${skill.name}'`, "success");
+                invalidateCache();
+              } else {
+                ctx.ui.notify(`✗ Failed to uninstall '${skill.name}'`, "error");
+              }
             }
           }
-        }
-        return;
-      }
-      if (choice === "Search skills") {
-        const query = await ctx.ui.input("Search skills:", "");
-        if (!query?.trim()) return;
-        const filtered = filterSkills(skills, query);
-        if (filtered.length === 0) {
-          ctx.ui.notify(`No skills found for '${query}'.`, "info");
-          return;
-        }
-        const skillNames = filtered.map((s) => {
-          const status = s.installed ? "✓" : " ";
-          return `${status} ${s.name} (${s.repo})`;
+          done();
         });
-        const selected = await ctx.ui.select(`Search results (${filtered.length}):`, [...skillNames, "Back"]);
-        if (!selected || selected === "Back") return;
-        const idx = skillNames.indexOf(selected);
-        if (idx >= 0) {
-          const skill = filtered[idx];
-          await showSkillDetail(skill, ctx);
-        }
-        return;
-      }
-      if (choice === "Browse available skills") {
-        if (available.length === 0) {
-          ctx.ui.notify("All available skills are already installed!", "info");
-          return;
-        }
-        await browseSkills(available, ctx);
-      }
+      });
     },
   });
-}
-
-async function showSkillDetail(skill: SkillEntry, ctx: ExtensionContext): Promise<void> {
-  const skillMdPath = path.join(skill.cachePath, "SKILL.md");
-  let preview = "";
-  try {
-    const content = await fs.readFile(skillMdPath, "utf8");
-    const lines = content.split("\n").slice(0, 15);
-    preview = lines.join("\n");
-  } catch {
-    preview = "Could not read skill details.";
-  }
-  const tags = skill.tags?.length ? `\nTags: ${skill.tags.join(", ")}` : "";
-  const cat = skill.category ? `\nCategory: ${skill.category}` : "";
-  const info = `Skill: ${skill.name}\nRepository: ${skill.repo}\nURL: ${skill.repoUrl}\nStatus: ${skill.installed ? "Installed" : "Not installed"}${cat}${tags}\n\nPreview:\n${preview}`;
-  const actions = skill.installed ? ["Uninstall", "Back"] : ["Install", "Back"];
-  const action = await ctx.ui.select(info, actions);
-  if (action === "Install") {
-    const ok = await installSkill(pi, skill);
-    if (ok) {
-      ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success");
-    } else {
-      ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error");
-    }
-  } else if (action === "Uninstall") {
-    const confirm = await ctx.ui.confirm(`Uninstall '${skill.name}'?`, "This will remove the skill.");
-    if (confirm) {
-      const ok = await uninstallSkill(pi, skill);
-      if (ok) {
-        ctx.ui.notify(`✓ Uninstalled '${skill.name}'`, "success");
-      } else {
-        ctx.ui.notify(`✗ Failed to uninstall '${skill.name}'`, "error");
-      }
-    }
-  }
-}
-
-async function browseSkills(skills: SkillEntry[], ctx: ExtensionContext): Promise<void> {
-  const pageSize = 15;
-  let page = 0;
-  while (true) {
-    const start = page * pageSize;
-    const end = Math.min(start + pageSize, skills.length);
-    const pageSkills = skills.slice(start, end);
-    const skillNames = pageSkills.map((s) => `${s.name} (${s.repo})`);
-    const navItems: string[] = [];
-    if (page > 0) navItems.push("← Previous page");
-    navItems.push(...skillNames);
-    if (end < skills.length) navItems.push("Next page →");
-    navItems.push("Back");
-    const title = `Browse Skills (page ${page + 1}/${Math.ceil(skills.length / pageSize)})`;
-    const selected = await ctx.ui.select(title, navItems);
-    if (!selected || selected === "Back") break;
-    if (selected === "← Previous page") { page--; continue; }
-    if (selected === "Next page →") { page++; continue; }
-    const idx = navItems.indexOf(selected) - (page > 0 ? 1 : 0);
-    if (idx >= 0 && idx < pageSkills.length) {
-      const skill = pageSkills[idx];
-      await showSkillDetail(skill, ctx);
-    }
-  }
 }
