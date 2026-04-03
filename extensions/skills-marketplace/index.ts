@@ -768,21 +768,26 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
     return results.some((hasUpdates) => hasUpdates);
   }
 
-  async function autoUpdateIfNeeded(): Promise<void> {
+  async function autoUpdateIfNeeded(): Promise<boolean> {
     const cacheExists = await fs.access(CACHE_DIR).then(() => true).catch(() => false);
     if (!cacheExists) {
       await updateCache();
-      return;
+      return true;
     }
     const hasUpdates = await checkForUpdates();
     if (hasUpdates) {
       await updateCache();
       invalidateCache();
+      return true;
     }
+    return false;
   }
 
-  pi.on("session_start", async () => {
-    await autoUpdateIfNeeded();
+  pi.on("session_start", async (_event, ctx) => {
+    const updated = await autoUpdateIfNeeded();
+    if (updated) {
+      pi.sendUserMessage("/reload", { deliverAs: "followUp" });
+    }
   });
 
   pi.registerCommand("marketplace", {
