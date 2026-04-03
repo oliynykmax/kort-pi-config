@@ -712,6 +712,7 @@ class MarketplaceSearchComponent {
 
 export default function skillsMarketplace(pi: ExtensionAPI) {
   let cachedSkills: SkillEntry[] | null = null;
+  let updatePromise: Promise<{ success: number; failed: number }> | null = null;
 
   async function getSkills(): Promise<SkillEntry[]> {
     if (cachedSkills) return cachedSkills;
@@ -725,15 +726,64 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
 
   async function updateCache(): Promise<{ success: number; failed: number }> {
     await ensureDir(CACHE_DIR);
-    let success = 0;
-    let failed = 0;
-    for (const repo of KNOWN_REPOS) {
-      const ok = await cloneOrUpdateRepo(pi, repo);
-      if (ok) success++;
-      else failed++;
-    }
+    const results = await Promise.all(
+      KNOWN_REPOS.map(async (repo) => {
+        try {
+          const ok = await cloneOrUpdateRepo(pi, repo);
+          return { name: repo.name, ok };
+        } catch {
+          return { name: repo.name, ok: false };
+        }
+      })
+    );
+    const success = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok).length;
     return { success, failed };
   }
+
+  async function updateCacheInBackground(): Promise<void> {
+    if (updatePromise) return;
+    updatePromise = (async () => {
+      const result = await updateCache();
+      invalidateCache();
+      updatePromise = null;
+      return result;
+    })();
+  }
+
+  async function checkForUpdates(): Promise<boolean> {
+    const results = await Promise.all(
+      KNOWN_REPOS.map(async (repo) => {
+        const repoDir = path.join(CACHE_DIR, repo.name);
+        const exists = await fs.access(path.join(repoDir, ".git")).then(() => true).catch(() => false);
+        if (!exists) return true;
+        try {
+          const result = await pi.exec("git", ["-C", repoDir, "fetch", "--dry-run"], { timeout: 15000 });
+          return result.stdout.includes("From") || result.stderr.includes("From");
+        } catch {
+          return false;
+        }
+      })
+    );
+    return results.some((hasUpdates) => hasUpdates);
+  }
+
+  async function autoUpdateIfNeeded(): Promise<void> {
+    const cacheExists = await fs.access(CACHE_DIR).then(() => true).catch(() => false);
+    if (!cacheExists) {
+      await updateCache();
+      return;
+    }
+    const hasUpdates = await checkForUpdates();
+    if (hasUpdates) {
+      await updateCache();
+      invalidateCache();
+    }
+  }
+
+  pi.on("session_start", async () => {
+    await autoUpdateIfNeeded();
+  });
 
   pi.registerCommand("marketplace", {
     description: "Browse, search, and install skills from multiple repositories",
