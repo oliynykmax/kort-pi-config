@@ -523,24 +523,6 @@ class MarketplaceSearchComponent {
 
     return this.renderSearch(width, this.theme);
   }
-    lines.push(truncateToWidth(th.fg("accent", " Skills Marketplace ") + th.fg("dim", `— ${this.skills.length} skills`), width));
-    lines.push("");
-
-    // Search bar
-    const prompt = th.fg("accent", "❯ ");
-    const beforeCursor = th.fg("text", this.query.slice(0, this.cursorPos));
-    const afterCursor = th.fg("dim", this.query.slice(this.cursorPos));
-    const cursor = th.fg("accent", th.bold(this.query[this.cursorPos] || " "));
-    const searchBar = prompt + beforeCursor + cursor + afterCursor;
-    lines.push(truncateToWidth(searchBar, width));
-
-    // Results count
-    if (this.query) {
-      lines.push(th.fg("dim", `${this.filteredSkills.length} matches — ↑↓ navigate, Enter select, Tab complete, Esc quit`));
-    } else {
-      lines.push(th.fg("dim", `${this.filteredSkills.length} skills — Type to search, ↑↓ navigate, Enter select, Tab complete, Esc quit`));
-    }
-    lines.push("");
 
   private computeVisibleWindow(width: number): { startIdx: number; endIdx: number } {
     const maxVisibleLines = 10;
