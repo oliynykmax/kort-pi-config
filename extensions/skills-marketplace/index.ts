@@ -568,7 +568,24 @@ class MarketplaceSearchComponent {
       lines.push(truncateToWidth(arrow + status + " " + name + " " + repo, width));
 
       if (isSelected) {
-        lines.push(truncateToWidth("    " + th.fg("dim", skill.description), width));
+        const descIndent = 4;
+        const descWidth = width - descIndent;
+        const words = skill.description.split(" ");
+        let currentLine = "";
+        const descLines: string[] = [];
+        for (const word of words) {
+          const test = currentLine ? currentLine + " " + word : word;
+          if (test.length > descWidth && currentLine) {
+            descLines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = test;
+          }
+        }
+        if (currentLine) descLines.push(currentLine);
+        for (const dl of descLines) {
+          lines.push(truncateToWidth("    " + th.fg("dim", dl), width));
+        }
       }
     }
 
