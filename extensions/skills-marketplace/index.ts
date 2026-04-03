@@ -783,14 +783,8 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
     return false;
   }
 
-  pi.on("session_start", async (_event, ctx) => {
-    const updated = await autoUpdateIfNeeded();
-    if (updated) {
-      ctx.ui.setStatus("skills-marketplace", "Skills updated", "success");
-      ctx.waitForIdle().then(() => {
-        ctx.reload();
-      });
-    }
+  pi.on("session_start", async () => {
+    autoUpdateIfNeeded();
   });
 
   pi.registerCommand("marketplace", {
