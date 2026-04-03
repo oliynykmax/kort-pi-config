@@ -340,7 +340,6 @@ class MarketplaceSearchComponent {
   private query = "";
   private cursorPos = 0;
   private selectedIndex = 0;
-  private scrollOffset = 0;
   private filteredSkills: SkillEntry[] = [];
   private mode: "search" | "detail" | "confirm" = "search";
   private detailSkill: SkillEntry | null = null;
@@ -410,9 +409,6 @@ class MarketplaceSearchComponent {
     if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
       if (this.selectedIndex > 0) {
         this.selectedIndex--;
-        if (this.selectedIndex < this.scrollOffset) {
-          this.scrollOffset = this.selectedIndex;
-        }
         this.invalidate();
       }
       return;
@@ -421,9 +417,6 @@ class MarketplaceSearchComponent {
     if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
       if (this.selectedIndex < this.filteredSkills.length - 1) {
         this.selectedIndex++;
-        if (this.selectedIndex >= this.scrollOffset + 10) {
-          this.scrollOffset = this.selectedIndex - 9;
-        }
         this.invalidate();
       }
       return;
@@ -503,7 +496,6 @@ class MarketplaceSearchComponent {
     this.filteredSkills = fuzzySearchSkills(this.skills, this.query);
     this.selectedIndex = Math.min(this.selectedIndex, this.filteredSkills.length - 1);
     if (this.selectedIndex < 0) this.selectedIndex = 0;
-    this.scrollOffset = 0;
   }
 
   private async loadPreview(skill: SkillEntry): Promise<void> {
@@ -517,20 +509,102 @@ class MarketplaceSearchComponent {
   }
 
   render(width: number): string[] {
-    if (this.cachedLines && this.cachedWidth === width) {
+    if (this.cachedWidth === width && this.cachedLines) {
       return this.cachedLines;
     }
 
-    const lines: string[] = [];
-    const th = this.theme;
-
     if (this.mode === "detail" && this.detailSkill) {
-      return this.renderDetail(width, th);
+      return this.renderDetail(width, this.theme);
     }
 
     if (this.mode === "confirm" && this.detailSkill) {
-      return this.renderConfirm(width, th);
+      return this.renderConfirm(width, this.theme);
     }
+
+    return this.renderSearch(width, this.theme);
+  }
+    lines.push(truncateToWidth(th.fg("accent", " Skills Marketplace ") + th.fg("dim", `— ${this.skills.length} skills`), width));
+    lines.push("");
+
+    // Search bar
+    const prompt = th.fg("accent", "❯ ");
+    const beforeCursor = th.fg("text", this.query.slice(0, this.cursorPos));
+    const afterCursor = th.fg("dim", this.query.slice(this.cursorPos));
+    const cursor = th.fg("accent", th.bold(this.query[this.cursorPos] || " "));
+    const searchBar = prompt + beforeCursor + cursor + afterCursor;
+    lines.push(truncateToWidth(searchBar, width));
+
+    // Results count
+    if (this.query) {
+      lines.push(th.fg("dim", `${this.filteredSkills.length} matches — ↑↓ navigate, Enter select, Tab complete, Esc quit`));
+    } else {
+      lines.push(th.fg("dim", `${this.filteredSkills.length} skills — Type to search, ↑↓ navigate, Enter select, Tab complete, Esc quit`));
+    }
+    lines.push("");
+
+  private computeVisibleWindow(width: number): { startIdx: number; endIdx: number } {
+    const maxVisibleLines = 10;
+    const descWidth = width - 4;
+    const skills = this.filteredSkills;
+    const sel = this.selectedIndex;
+
+    if (sel < 0 || skills.length === 0) return { startIdx: 0, endIdx: 0 };
+
+    // Count how many lines the selected item takes
+    const selDescLines = this.countDescLines(skills[sel].description, descWidth);
+    const selTotalLines = 1 + selDescLines;
+
+    // Try to center: fill above and below the selected item
+    // Start by assuming selected item is at some position in the window
+    // Build window upward from selected, then downward
+    let startIdx = sel;
+    let linesUsed = selTotalLines;
+
+    // Fill upward (items before selected)
+    for (let i = sel - 1; i >= 0 && linesUsed < maxVisibleLines; i--) {
+      const itemLines = 1; // non-selected items are 1 line
+      if (linesUsed + itemLines <= maxVisibleLines) {
+        startIdx = i;
+        linesUsed += itemLines;
+      } else {
+        break;
+      }
+    }
+
+    // Fill downward (items after selected)
+    let endIdx = sel + 1;
+    for (let i = sel + 1; i < skills.length && linesUsed < maxVisibleLines; i++) {
+      const itemLines = 1; // non-selected items are 1 line
+      if (linesUsed + itemLines <= maxVisibleLines) {
+        endIdx = i + 1;
+        linesUsed += itemLines;
+      } else {
+        break;
+      }
+    }
+
+    return { startIdx, endIdx };
+  }
+
+  private countDescLines(desc: string, width: number): number {
+    const words = desc.split(" ");
+    let currentLine = "";
+    let count = 0;
+    for (const word of words) {
+      const test = currentLine ? currentLine + " " + word : word;
+      if (test.length > width && currentLine) {
+        count++;
+        currentLine = word;
+      } else {
+        currentLine = test;
+      }
+    }
+    if (currentLine) count++;
+    return count;
+  }
+
+  private renderSearch(width: number, th: Theme): string[] {
+    const lines: string[] = [];
 
     // Header
     lines.push("");
@@ -553,73 +627,11 @@ class MarketplaceSearchComponent {
     }
     lines.push("");
 
-    // Results list — compact, expand description on hover
-    // Calculate how many items fit given that the selected item takes extra lines for its description
-    const maxVisibleLines = 10;
-    const descIndent = 4;
-    const descWidth = width - descIndent;
+    // Results list
+    const { startIdx, endIdx } = this.computeVisibleWindow(width);
+    const descWidth = width - 4;
 
-    // First pass: count how many items we can show starting from scrollOffset
-    let itemCount = 0;
-    let linesUsed = 0;
-    const itemsToShow: number[] = [];
-
-    for (let i = this.scrollOffset; i < this.filteredSkills.length; i++) {
-      const skill = this.filteredSkills[i];
-      const isSelected = i === this.selectedIndex;
-      let itemLines = 1; // name line
-      if (isSelected) {
-        // Count description lines
-        const words = skill.description.split(" ");
-        let currentLine = "";
-        for (const word of words) {
-          const test = currentLine ? currentLine + " " + word : word;
-          if (test.length > descWidth && currentLine) {
-            itemLines++;
-            currentLine = word;
-          } else {
-            currentLine = test;
-          }
-        }
-        if (currentLine) itemLines++;
-      }
-      if (linesUsed + itemLines > maxVisibleLines && itemCount > 0) break;
-      itemsToShow.push(i);
-      itemCount++;
-      linesUsed += itemLines;
-    }
-
-    // Ensure selected item is always visible
-    if (this.selectedIndex < this.scrollOffset) {
-      this.scrollOffset = this.selectedIndex;
-      // Recalculate
-      itemsToShow.length = 0;
-      linesUsed = 0;
-      for (let i = this.scrollOffset; i < this.filteredSkills.length; i++) {
-        const skill = this.filteredSkills[i];
-        const isSelected = i === this.selectedIndex;
-        let itemLines = 1;
-        if (isSelected) {
-          const words = skill.description.split(" ");
-          let currentLine = "";
-          for (const word of words) {
-            const test = currentLine ? currentLine + " " + word : word;
-            if (test.length > descWidth && currentLine) {
-              itemLines++;
-              currentLine = word;
-            } else {
-              currentLine = test;
-            }
-          }
-          if (currentLine) itemLines++;
-        }
-        if (linesUsed + itemLines > maxVisibleLines && itemsToShow.length > 0) break;
-        itemsToShow.push(i);
-        linesUsed += itemLines;
-      }
-    }
-
-    for (const i of itemsToShow) {
+    for (let i = startIdx; i < endIdx; i++) {
       const skill = this.filteredSkills[i];
       const isSelected = i === this.selectedIndex;
       const status = skill.installed ? th.fg("success", "✓") : th.fg("dim", "○");
