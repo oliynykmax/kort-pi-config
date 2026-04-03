@@ -533,7 +533,7 @@ class MarketplaceSearchComponent {
 
     // Header
     lines.push("");
-    lines.push(truncateToWidth(th.fg("accent", " Skills Marketplace ") + th.fg("dim", ` — ${this.skills.length} skills total`), width));
+    lines.push(truncateToWidth(th.fg("accent", " Skills Marketplace ") + th.fg("dim", `— ${this.skills.length} skills`), width));
     lines.push("");
 
     // Search bar
@@ -546,14 +546,14 @@ class MarketplaceSearchComponent {
 
     // Results count
     if (this.query) {
-      lines.push(th.fg("dim", `${this.filteredSkills.length} match${this.filteredSkills.length !== 1 ? "es" : ""} — ↑↓ navigate, Enter select, Tab complete, Esc quit`));
+      lines.push(th.fg("dim", `${this.filteredSkills.length} matches — ↑↓ navigate, Enter select, Tab complete, Esc quit`));
     } else {
       lines.push(th.fg("dim", `${this.filteredSkills.length} skills — Type to search, ↑↓ navigate, Enter select, Tab complete, Esc quit`));
     }
     lines.push("");
 
-    // Results list
-    const visibleCount = Math.min(12, this.filteredSkills.length);
+    // Results list — compact, expand description on hover
+    const visibleCount = Math.min(16, this.filteredSkills.length);
     const startIdx = this.scrollOffset;
     const endIdx = Math.min(startIdx + visibleCount, this.filteredSkills.length);
 
@@ -564,19 +564,20 @@ class MarketplaceSearchComponent {
       const arrow = isSelected ? th.fg("accent", "▸ ") : "  ";
       const name = isSelected ? th.fg("accent", th.bold(skill.name)) : th.fg("text", skill.name);
       const repo = th.fg("muted", `(${skill.repo}${skill.category ? "/" + skill.category : ""})`);
-      const desc = th.fg("dim", skill.description);
 
       lines.push(truncateToWidth(arrow + status + " " + name + " " + repo, width));
-      lines.push(truncateToWidth("    " + desc, width));
-      lines.push("");
+
+      if (isSelected) {
+        lines.push(truncateToWidth("    " + th.fg("dim", skill.description), width));
+      }
     }
 
     if (this.filteredSkills.length === 0 && this.query) {
-      lines.push(th.fg("dim", "  No matches found. Try different keywords."));
-      lines.push("");
+      lines.push(th.fg("dim", "  No matches found."));
     }
 
-    lines.push(th.fg("dim", "  Press Escape to exit"));
+    lines.push("");
+    lines.push(th.fg("dim", "  Esc quit"));
     lines.push("");
 
     this.cachedWidth = width;
