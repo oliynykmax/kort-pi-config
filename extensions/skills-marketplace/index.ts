@@ -71,34 +71,26 @@ async function parseSkillMetadata(skillDir: string): Promise<{ name: string; des
   }
 }
 
-async function rewriteSkillContent(skillDir: string): Promise<void> {
-  const skillMdPath = path.join(skillDir, "SKILL.md");
-  try {
-    let content = await fs.readFile(skillMdPath, "utf8");
-    const replacements: [RegExp, string][] = [
-      [/Claude Code/g, "pi agent"],
-      [/Claude/g, "pi agent"],
-      [/Codex CLI/g, "pi agent"],
-      [/Codex/g, "pi agent"],
-      [/codex/g, "pi agent"],
-      [/claude code/g, "pi agent"],
-      [/claude/g, "pi agent"],
-      [/~\/\.claude\/skills/g, "~/.pi/agent/skills"],
-      [/~\/\.codex\/skills/g, "~/.pi/agent/skills"],
-      [/\.claude\/skills/g, ".pi/agent/skills"],
-      [/\.codex\/skills/g, ".pi/agent/skills"],
-    ];
-    let changed = false;
-    for (const [pattern, replacement] of replacements) {
-      if (pattern.test(content)) {
-        content = content.replace(pattern, replacement);
-        changed = true;
-      }
+async function rewriteSkillContent(content: string): Promise<string> {
+  const replacements: [RegExp, string][] = [
+    [/Claude Code/g, "pi agent"],
+    [/Claude/g, "pi agent"],
+    [/Codex CLI/g, "pi agent"],
+    [/Codex/g, "pi agent"],
+    [/codex/g, "pi agent"],
+    [/claude code/g, "pi agent"],
+    [/claude/g, "pi agent"],
+    [/~\/\.claude\/skills/g, "~/.pi/agent/skills"],
+    [/~\/\.codex\/skills/g, "~/.pi/agent/skills"],
+    [/\.claude\/skills/g, ".pi/agent/skills"],
+    [/\.codex\/skills/g, ".pi/agent/skills"],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(content)) {
+      content = content.replace(pattern, replacement);
     }
-    if (changed) {
-      await fs.writeFile(skillMdPath, content, "utf8");
-    }
-  } catch { /* ignore */ }
+  }
+  return content;
 }
 
 async function makeSkillEntry(repoName: string, repoUrl: string, skillDir: string, entryName: string, category?: string): Promise<SkillEntry | null> {
@@ -129,7 +121,6 @@ async function discoverFlatSkills(repoDir: string, repoName: string, repoUrl: st
       const skillPath = path.join(repoDir, entry.name);
       const hasSkillMd = await fs.access(path.join(skillPath, "SKILL.md")).then(() => true).catch(() => false);
       if (!hasSkillMd) continue;
-      await rewriteSkillContent(skillPath);
       const skill = await makeSkillEntry(repoName, repoUrl, skillPath, entry.name);
       if (skill) skills.push(skill);
     }
@@ -151,7 +142,6 @@ async function discoverDomainNestedSkills(repoDir: string, repoName: string, rep
         const skillPath = path.join(domainPath, entry.name);
         const hasSkillMd = await fs.access(path.join(skillPath, "SKILL.md")).then(() => true).catch(() => false);
         if (!hasSkillMd) continue;
-        await rewriteSkillContent(skillPath);
         const skill = await makeSkillEntry(repoName, repoUrl, skillPath, entry.name, domain);
         if (skill) skills.push(skill);
       }
@@ -174,7 +164,6 @@ async function discoverOpenAICuratedSkills(repoDir: string, repoName: string, re
         const skillPath = path.join(catPath, entry.name);
         const hasSkillMd = await fs.access(path.join(skillPath, "SKILL.md")).then(() => true).catch(() => false);
         if (!hasSkillMd) continue;
-        await rewriteSkillContent(skillPath);
         const catLabel = cat.replace("skills/", "");
         const skill = await makeSkillEntry(repoName, repoUrl, skillPath, entry.name, catLabel);
         if (skill) skills.push(skill);
@@ -202,7 +191,6 @@ async function discoverPluginNestedSkills(repoDir: string, repoName: string, rep
         const skillPath = path.join(skillsDir, entry.name);
         const hasSkillMd = await fs.access(path.join(skillPath, "SKILL.md")).then(() => true).catch(() => false);
         if (!hasSkillMd) continue;
-        await rewriteSkillContent(skillPath);
         const skill = await makeSkillEntry(repoName, repoUrl, skillPath, entry.name, plugin.name);
         if (skill) skills.push(skill);
       }
@@ -221,6 +209,26 @@ async function discoverSkillsInRepo(repo: SkillRepo): Promise<SkillEntry[]> {
     case "plugin-nested": return discoverPluginNestedSkills(repoDir, repo.name, repo.url);
     default: return discoverFlatSkills(repoDir, repo.name, repo.url);
   }
+}
+
+async function installSkillToTarget(pi: ExtensionAPI, skill: SkillEntry): Promise<boolean> {
+  const targetPath = path.join(SKILLS_DIR, path.basename(skill.cachePath));
+  await ensureDir(SKILLS_DIR);
+
+  const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
+  if (result.code !== 0) return false;
+
+  // Rewrite SKILL.md content at install target
+  const skillMdPath = path.join(targetPath, "SKILL.md");
+  try {
+    const content = await fs.readFile(skillMdPath, "utf8");
+    const rewritten = await rewriteSkillContent(content);
+    if (content !== rewritten) {
+      await fs.writeFile(skillMdPath, rewritten, "utf8");
+    }
+  } catch { /* ignore */ }
+
+  return true;
 }
 
 async function loadAllSkills(): Promise<SkillEntry[]> {
@@ -796,7 +804,11 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         ctx.ui.notify("Updating skills cache...", "info");
         const result = await updateCache();
         invalidateCache();
-        ctx.ui.notify(`Cache updated: ${result.success} repos succeeded, ${result.failed} failed.\nRestart pi or run /reload to see new skills.`, result.failed === 0 ? "success" : "info");
+        if (result.failed > 0) {
+          ctx.ui.notify(`Cache updated: ${result.success} succeeded, ${result.failed} failed.\nNew skills are available immediately.`, result.success > 0 ? "info" : "error");
+        } else {
+          ctx.ui.notify(`Cache updated: ${result.success} repos succeeded.\nNew skills are available immediately.`, "success");
+        }
         return;
       }
 
@@ -807,10 +819,8 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         if (!skill) { ctx.ui.notify(`Skill '${skillName}' not found. Run /marketplace update first.`, "error"); return; }
         if (skill.installed) { ctx.ui.notify(`Skill '${skill.name}' is already installed.`, "info"); return; }
         ctx.ui.notify(`Installing '${skill.name}'...`, "info");
-        const targetPath = path.join(SKILLS_DIR, path.basename(skill.cachePath));
-        await ensureDir(SKILLS_DIR);
-        const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
-        if (result.code === 0) { ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success"); invalidateCache(); }
+        const ok = await installSkillToTarget(pi, skill);
+        if (ok) { ctx.ui.notify(`✓ Installed '${skill.name}'`, "success"); invalidateCache(); }
         else { ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error"); }
         return;
       }
@@ -865,9 +875,9 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
 
             if (action === "install") {
               ctx.ui.notify(`Installing '${skill.name}'...`, "info");
-              const result = await pi.exec("cp", ["-r", skill.cachePath, targetPath], { timeout: 10000 });
-              if (result.code === 0) {
-                ctx.ui.notify(`✓ Installed '${skill.name}'\nRestart pi or run /reload to activate.`, "success");
+              const ok = await installSkillToTarget(pi, skill);
+              if (ok) {
+                ctx.ui.notify(`✓ Installed '${skill.name}'`, "success");
                 invalidateCache();
               } else {
                 ctx.ui.notify(`✗ Failed to install '${skill.name}'`, "error");
