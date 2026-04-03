@@ -554,11 +554,72 @@ class MarketplaceSearchComponent {
     lines.push("");
 
     // Results list — compact, expand description on hover
-    const visibleCount = Math.min(16, this.filteredSkills.length);
-    const startIdx = this.scrollOffset;
-    const endIdx = Math.min(startIdx + visibleCount, this.filteredSkills.length);
+    // Calculate how many items fit given that the selected item takes extra lines for its description
+    const maxVisibleLines = 10;
+    const descIndent = 4;
+    const descWidth = width - descIndent;
 
-    for (let i = startIdx; i < endIdx; i++) {
+    // First pass: count how many items we can show starting from scrollOffset
+    let itemCount = 0;
+    let linesUsed = 0;
+    const itemsToShow: number[] = [];
+
+    for (let i = this.scrollOffset; i < this.filteredSkills.length; i++) {
+      const skill = this.filteredSkills[i];
+      const isSelected = i === this.selectedIndex;
+      let itemLines = 1; // name line
+      if (isSelected) {
+        // Count description lines
+        const words = skill.description.split(" ");
+        let currentLine = "";
+        for (const word of words) {
+          const test = currentLine ? currentLine + " " + word : word;
+          if (test.length > descWidth && currentLine) {
+            itemLines++;
+            currentLine = word;
+          } else {
+            currentLine = test;
+          }
+        }
+        if (currentLine) itemLines++;
+      }
+      if (linesUsed + itemLines > maxVisibleLines && itemCount > 0) break;
+      itemsToShow.push(i);
+      itemCount++;
+      linesUsed += itemLines;
+    }
+
+    // Ensure selected item is always visible
+    if (this.selectedIndex < this.scrollOffset) {
+      this.scrollOffset = this.selectedIndex;
+      // Recalculate
+      itemsToShow.length = 0;
+      linesUsed = 0;
+      for (let i = this.scrollOffset; i < this.filteredSkills.length; i++) {
+        const skill = this.filteredSkills[i];
+        const isSelected = i === this.selectedIndex;
+        let itemLines = 1;
+        if (isSelected) {
+          const words = skill.description.split(" ");
+          let currentLine = "";
+          for (const word of words) {
+            const test = currentLine ? currentLine + " " + word : word;
+            if (test.length > descWidth && currentLine) {
+              itemLines++;
+              currentLine = word;
+            } else {
+              currentLine = test;
+            }
+          }
+          if (currentLine) itemLines++;
+        }
+        if (linesUsed + itemLines > maxVisibleLines && itemsToShow.length > 0) break;
+        itemsToShow.push(i);
+        linesUsed += itemLines;
+      }
+    }
+
+    for (const i of itemsToShow) {
       const skill = this.filteredSkills[i];
       const isSelected = i === this.selectedIndex;
       const status = skill.installed ? th.fg("success", "✓") : th.fg("dim", "○");
@@ -569,8 +630,6 @@ class MarketplaceSearchComponent {
       lines.push(truncateToWidth(arrow + status + " " + name + " " + repo, width));
 
       if (isSelected) {
-        const descIndent = 4;
-        const descWidth = width - descIndent;
         const words = skill.description.split(" ");
         let currentLine = "";
         const descLines: string[] = [];
