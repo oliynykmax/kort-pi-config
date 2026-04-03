@@ -34,6 +34,7 @@ const KNOWN_REPOS: SkillRepo[] = [
   { name: "claude-skills", url: "https://github.com/alirezarezvani/claude-skills", description: "220+ engineering, marketing, product, and advisory skills", adapter: "domain-nested" },
   { name: "openai-skills", url: "https://github.com/openai/skills", description: "Official OpenAI curated skills for Codex", adapter: "openai-curated" },
   { name: "jezweb-skills", url: "https://github.com/jezweb/claude-skills", description: "60+ Cloudflare, frontend, integrations, and dev-tools skills", adapter: "plugin-nested" },
+  { name: "anthropics-claude-code", url: "https://github.com/anthropics/claude-code", description: "Official Claude Code plugins (frontend-design, feature-dev, code-review, etc.)", adapter: "plugin-nested" },
 ];
 
 async function ensureDir(dir: string): Promise<void> {
