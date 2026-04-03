@@ -19,6 +19,7 @@ Sync my local pi extensions to https://github.com/oliynykmax/kort-pi-config by r
 ## Extensions in this config
 
 - init-agents
+- openrouter-provider
 - plan-mode
 - self-update
 - session-name
