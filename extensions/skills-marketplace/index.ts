@@ -60,10 +60,11 @@ async function parseSkillMetadata(skillDir: string): Promise<{ name: string; des
     const nameMatch = content.match(/^name:\s*(.+)$/m);
     const descMatch = content.match(/^description:\s*(.+)$/m);
     const tagsMatch = content.match(/^tags:\s*(.+)$/m);
+    const stripQuotes = (s: string) => s.replace(/^["']|["']$/g, "");
     return {
-      name: nameMatch?.[1]?.trim() || path.basename(skillDir),
-      description: descMatch?.[1]?.trim() || "No description available",
-      tags: tagsMatch?.[1]?.split(",").map((t: string) => t.trim()),
+      name: stripQuotes(nameMatch?.[1]?.trim() || "") || path.basename(skillDir),
+      description: descMatch?.[1]?.trim() ? stripQuotes(descMatch[1].trim()) : "No description available",
+      tags: tagsMatch?.[1]?.split(",").map((t: string) => stripQuotes(t.trim())),
     };
   } catch {
     return null;
