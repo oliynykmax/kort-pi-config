@@ -167,16 +167,50 @@ async function uninstallSkill(pi: ExtensionAPI, skill: SkillEntry): Promise<bool
   return result.code === 0;
 }
 
+function fuzzyScore(text: string, query: string): number {
+  let score = 0;
+  let textIdx = 0;
+  for (let i = 0; i < query.length; i++) {
+    const found = text.indexOf(query[i], textIdx);
+    if (found === -1) return 0;
+    score += found === textIdx ? 2 : 1;
+    textIdx = found + 1;
+  }
+  return score;
+}
+
 function filterSkills(skills: SkillEntry[], query: string): SkillEntry[] {
   if (!query.trim()) return skills;
-  const q = query.toLowerCase();
-  return skills.filter(
-    (s) =>
-      s.name.toLowerCase().includes(q) ||
-      s.description.toLowerCase().includes(q) ||
-      s.repo.toLowerCase().includes(q) ||
-      s.tags?.some((t) => t.toLowerCase().includes(q))
-  );
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+
+  const scored = skills
+    .map((skill) => {
+      const searchable = [
+        { text: skill.name.toLowerCase(), weight: 10 },
+        { text: skill.repo.toLowerCase(), weight: 5 },
+        { text: skill.description.toLowerCase(), weight: 2 },
+        ...(skill.tags?.map((t) => ({ text: t.toLowerCase(), weight: 3 })) || []),
+      ];
+
+      let totalScore = 0;
+      for (const word of words) {
+        let wordMatched = false;
+        for (const field of searchable) {
+          const s = fuzzyScore(field.text, word);
+          if (s > 0) {
+            totalScore += s * field.weight;
+            wordMatched = true;
+          }
+        }
+        if (!wordMatched) return { skill, score: 0 };
+      }
+      return { skill, score: totalScore };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.skill);
+
+  return scored;
 }
 
 export default function skillsMarketplace(pi: ExtensionAPI) {
@@ -382,7 +416,7 @@ export default function skillsMarketplace(pi: ExtensionAPI) {
         }
         const skillNames = filtered.map((s) => {
           const status = s.installed ? "✓" : " ";
-          return `${status} ${s.name} (${skill.repo})`;
+          return `${status} ${s.name} (${s.repo})`;
         });
         const selected = await ctx.ui.select(`Search results (${filtered.length}):`, [...skillNames, "Back"]);
         if (!selected || selected === "Back") return;
