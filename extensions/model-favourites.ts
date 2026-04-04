@@ -1,22 +1,31 @@
 /**
  * Model Favourites Extension
  *
- * Adds favourites to model selection with ⭐ markers.
+ * Live fuzzy search model selector like marketplace.
  *
  * Usage:
- * - Ctrl+M - Select model (favourites at top, native scrolling)
- * - /fav [model] - Select model or open selector
+ * - Ctrl+M - Open live search selector (shows ~7 at a time)
+ * - Type to filter models in real-time
+ * - ↑↓ navigate, Enter select, Esc cancel
+ * - Ctrl+F toggle favourite in selector
  * - /fav-toggle - Toggle current model as favourite
  */
 
 import { readFile, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
+import { type Component, matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
 
 const FAVOURITES_FILE = join(process.env.HOME || "~", ".pi/agent/model-favourites.json");
 
 interface FavouritesData {
 	models: string[];
+}
+
+interface ModelInfo {
+	provider: string;
+	id: string;
+	name?: string;
 }
 
 async function loadFavourites(): Promise<FavouritesData> {
@@ -56,6 +65,229 @@ function toggleFavourite(provider: string, modelId: string, favourites: Favourit
 	return true;
 }
 
+// Fuzzy match
+function fuzzyMatch(text: string, pattern: string): boolean {
+	if (!pattern) return true;
+	const textLower = text.toLowerCase();
+	const patternLower = pattern.toLowerCase();
+	let ti = 0;
+	for (const char of patternLower) {
+		ti = textLower.indexOf(char, ti);
+		if (ti === -1) return false;
+		ti++;
+	}
+	return true;
+}
+
+class ModelSearchComponent implements Component {
+	private models: ModelInfo[];
+	private favourites: FavouritesData;
+	private theme: Theme;
+	private query = "";
+	private cursorPos = 0;
+	private selectedIndex = 0;
+	private filteredModels: ModelInfo[] = [];
+	private onSelect: (model: ModelInfo) => void;
+	private onToggleFav: (model: ModelInfo) => void;
+	private onCancel: () => void;
+	private cachedWidth?: number;
+	private cachedLines?: string[];
+
+	constructor(
+		models: ModelInfo[],
+		favourites: FavouritesData,
+		theme: Theme,
+		onSelect: (model: ModelInfo) => void,
+		onToggleFav: (model: ModelInfo) => void,
+		onCancel: () => void
+	) {
+		this.models = models;
+		this.favourites = favourites;
+		this.theme = theme;
+		this.onSelect = onSelect;
+		this.onToggleFav = onToggleFav;
+		this.onCancel = onCancel;
+		this.updateFilter();
+	}
+
+	private updateFilter() {
+		const query = this.query.trim();
+		
+		// Filter models
+		let filtered = this.models.filter(m => {
+			const searchText = `${m.name || m.id} ${m.provider} ${m.id}`;
+			return fuzzyMatch(searchText, query);
+		});
+
+		// Sort: favourites first, then alphabetically
+		filtered.sort((a, b) => {
+			const aFav = isFavourite(a.provider, a.id, this.favourites);
+			const bFav = isFavourite(b.provider, b.id, this.favourites);
+			if (aFav !== bFav) return aFav ? -1 : 1;
+			return (a.name || a.id).localeCompare(b.name || b.id);
+		});
+
+		this.filteredModels = filtered;
+		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, filtered.length - 1));
+		this.invalidate();
+	}
+
+	// Calculate which models to show in visible window (like marketplace)
+	private computeVisibleWindow(): { startIdx: number; endIdx: number } {
+		const maxVisible = 7; // Show 7 models at a time
+		const total = this.filteredModels.length;
+		const sel = this.selectedIndex;
+
+		if (total === 0) return { startIdx: 0, endIdx: 0 };
+		if (total <= maxVisible) return { startIdx: 0, endIdx: total };
+
+		// Try to center selected item in the window
+		let startIdx = Math.max(0, sel - Math.floor(maxVisible / 2));
+		let endIdx = startIdx + maxVisible;
+
+		// Adjust if we're at the end
+		if (endIdx > total) {
+			endIdx = total;
+			startIdx = Math.max(0, endIdx - maxVisible);
+		}
+
+		return { startIdx, endIdx };
+	}
+
+	handleInput(data: string): void {
+		// Cancel
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.onCancel();
+			return;
+		}
+
+		// Select
+		if (matchesKey(data, "enter")) {
+			if (this.filteredModels.length > 0) {
+				this.onSelect(this.filteredModels[this.selectedIndex]);
+			}
+			return;
+		}
+
+		// Navigate
+		if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
+			if (this.selectedIndex > 0) {
+				this.selectedIndex--;
+				this.invalidate();
+			}
+			return;
+		}
+
+		if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
+			if (this.selectedIndex < this.filteredModels.length - 1) {
+				this.selectedIndex++;
+				this.invalidate();
+			}
+			return;
+		}
+
+		// Toggle favourite
+		if (matchesKey(data, "ctrl+f")) {
+			if (this.filteredModels.length > 0) {
+				this.onToggleFav(this.filteredModels[this.selectedIndex]);
+				this.updateFilter(); // Re-sort after toggle
+			}
+			return;
+		}
+
+		// Backspace
+		if (matchesKey(data, "backspace") || data === "\x7f") {
+			if (this.cursorPos > 0) {
+				this.query = this.query.slice(0, this.cursorPos - 1) + this.query.slice(this.cursorPos);
+				this.cursorPos--;
+				this.updateFilter();
+			}
+			return;
+		}
+
+		// Clear all
+		if (matchesKey(data, "ctrl+u")) {
+			this.query = "";
+			this.cursorPos = 0;
+			this.updateFilter();
+			return;
+		}
+
+		// Type character
+		if (data.length === 1 && data >= " ") {
+			this.query = this.query.slice(0, this.cursorPos) + data + this.query.slice(this.cursorPos);
+			this.cursorPos++;
+			this.updateFilter();
+		}
+	}
+
+	render(width: number): string[] {
+		if (this.cachedWidth === width && this.cachedLines) {
+			return this.cachedLines;
+		}
+
+		const th = this.theme;
+		const lines: string[] = [];
+
+		// Header
+		lines.push("");
+		lines.push(truncateToWidth(th.fg("accent", " Model Selector ") + th.fg("dim", `— ${this.models.length} models`), width));
+		lines.push("");
+
+		// Search bar
+		const prompt = th.fg("accent", "❯ ");
+		const beforeCursor = th.fg("text", this.query.slice(0, this.cursorPos));
+		const cursor = th.fg("accent", th.bold(this.query[this.cursorPos] || " "));
+		const afterCursor = th.fg("dim", this.query.slice(this.cursorPos));
+		const searchBar = prompt + beforeCursor + cursor + afterCursor;
+		lines.push(truncateToWidth(searchBar, width));
+
+		// Hint
+		const hint = this.query
+			? `${this.filteredModels.length} matches — ↑↓ navigate, Enter select, Ctrl+F fav, Esc quit`
+			: `Type to search — ↑↓ navigate, Enter select, Ctrl+F fav, Esc quit`;
+		lines.push(th.fg("dim", hint));
+		lines.push("");
+
+		// Results list (scrolling window of 7)
+		const { startIdx, endIdx } = this.computeVisibleWindow();
+
+		for (let i = startIdx; i < endIdx; i++) {
+			const model = this.filteredModels[i];
+			const isSelected = i === this.selectedIndex;
+			const isFav = isFavourite(model.provider, model.id, this.favourites);
+			
+			const arrow = isSelected ? th.fg("accent", "▸ ") : "  ";
+			const star = isFav ? "⭐ " : "";
+			const name = isSelected 
+				? th.fg("accent", th.bold(model.name || model.id)) 
+				: th.fg("text", model.name || model.id);
+			const provider = th.fg("muted", `(${model.provider})`);
+			
+			lines.push(truncateToWidth(arrow + star + name + " " + provider, width));
+		}
+
+		if (this.filteredModels.length === 0 && this.query) {
+			lines.push(th.fg("dim", "  No matches found."));
+		}
+
+		if (endIdx < this.filteredModels.length) {
+			lines.push(th.fg("dim", `  ... and ${this.filteredModels.length - endIdx} more`));
+		}
+
+		lines.push("");
+
+		this.cachedWidth = width;
+		this.cachedLines = lines;
+		return lines;
+	}
+
+	invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
+}
+
 export default function modelFavouritesExtension(pi: ExtensionAPI) {
 	let favourites: FavouritesData = { models: [] };
 
@@ -65,66 +297,43 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 	});
 
 	async function showModelSelector(ctx: ExtensionContext): Promise<void> {
-		const allModels = ctx.modelRegistry.getAll();
-		
-		// Separate favourites from regular models
-		const favModels: typeof allModels = [];
-		const regularModels: typeof allModels = [];
+		const allModels: ModelInfo[] = ctx.modelRegistry.getAll().map(m => ({
+			provider: m.provider,
+			id: m.id,
+			name: m.name,
+		}));
 
-		for (const model of allModels) {
-			if (isFavourite(model.provider, model.id, favourites)) {
-				favModels.push(model);
-			} else {
-				regularModels.push(model);
-			}
-		}
-
-		// Sort both groups
-		const sortByName = (a: typeof allModels[0], b: typeof allModels[0]) => 
-			(a.name || a.id).localeCompare(b.name || b.id);
-		
-		favModels.sort(sortByName);
-		regularModels.sort(sortByName);
-
-		// Build options list
-		const options: string[] = [];
-		const modelMap = new Map<string, typeof allModels[0]>();
-
-		// Add favourites section
-		if (favModels.length > 0) {
-			for (const model of favModels) {
-				const label = `⭐ ${model.name || model.id}`;
-				options.push(label);
-				modelMap.set(label, model);
-			}
-			options.push("───────────"); // Separator
-		}
-
-		// Add regular models
-		for (const model of regularModels) {
-			const label = `${model.name || model.id} (${model.provider})`;
-			options.push(label);
-			modelMap.set(label, model);
-		}
-
-		// Native select with scrolling (shows ~7 at a time)
-		const choice = await ctx.ui.select("Select model", options);
-		if (!choice || choice === "───────────") return;
-
-		const model = modelMap.get(choice);
-		if (model) {
-			const success = await pi.setModel(model);
-			if (success) {
-				ctx.ui.notify(`Switched to ${model.provider}/${model.id}`, "success");
-			} else {
-				ctx.ui.notify(`No API key for ${model.provider}`, "error");
-			}
-		}
+		await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+			const component = new ModelSearchComponent(
+				allModels,
+				favourites,
+				theme,
+				async (model) => {
+					const fullModel = ctx.modelRegistry.find(model.provider, model.id);
+					if (fullModel) {
+						const success = await pi.setModel(fullModel);
+						if (success) {
+							ctx.ui.notify(`Switched to ${model.provider}/${model.id}`, "success");
+						} else {
+							ctx.ui.notify(`No API key for ${model.provider}`, "error");
+						}
+					}
+					done();
+				},
+				async (model) => {
+					const isNowFav = toggleFavourite(model.provider, model.id, favourites);
+					await saveFavourites(favourites);
+					ctx.ui.notify(isNowFav ? `⭐ Added to favourites` : `Removed from favourites`, isNowFav ? "success" : "info");
+				},
+				() => done()
+			);
+			return component;
+		});
 	}
 
 	// Ctrl+M shortcut
 	pi.registerShortcut("ctrl+m", {
-		description: "Select model (favourites at top)",
+		description: "Live search model selector (like marketplace)",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("This requires interactive mode", "error");
@@ -136,7 +345,7 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 
 	// /fav command
 	pi.registerCommand("fav", {
-		description: "Select model. Usage: /fav [provider/model]",
+		description: "Select model with live search. Usage: /fav [provider/model]",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("This command requires interactive mode", "error");
