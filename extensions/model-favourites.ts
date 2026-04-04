@@ -1,13 +1,18 @@
 /**
  * Model Favourites Extension
  *
- * Adds favourites support to model selection.
+ * Adds favourites support and search to model selection.
  * Favourites are shown at the top with a ⭐ marker.
  *
  * Usage:
- * - Ctrl+M - Open model selector with favourites at top
- * - /fav [model] - Select model or open selector
+ * - Ctrl+M - Search models, then select (favourites at top)
+ * - /fav [model] - Select model or open selector with search
  * - /fav-toggle - Toggle current model as favourite
+ * 
+ * Tips:
+ * - Search is case-insensitive and matches name/provider/id
+ * - Press Enter on empty search to see all models
+ * - Use arrow keys to scroll through results
  */
 
 import { readFile, writeFile, access } from "node:fs/promises";
@@ -68,11 +73,29 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 	async function showModelSelector(ctx: ExtensionContext): Promise<void> {
 		const allModels = ctx.modelRegistry.getAll();
 		
+		// Ask for search filter (optional)
+		const searchQuery = await ctx.ui.input("Search models (or press Enter for all):", "");
+		if (searchQuery === null) return; // User cancelled
+		
+		// Filter models if search query provided
+		const query = searchQuery?.trim().toLowerCase() || "";
+		const filteredModels = query
+			? allModels.filter(m => {
+					const searchText = `${m.name || m.id} ${m.provider} ${m.id}`.toLowerCase();
+					return searchText.includes(query);
+			  })
+			: allModels;
+		
+		if (filteredModels.length === 0) {
+			ctx.ui.notify(`No models match "${searchQuery}"`, "error");
+			return;
+		}
+		
 		// Group models: favourites first, then by provider
-		const favModels: typeof allModels = [];
-		const regularByProvider = new Map<string, typeof allModels>();
+		const favModels: typeof filteredModels = [];
+		const regularByProvider = new Map<string, typeof filteredModels>();
 
-		for (const model of allModels) {
+		for (const model of filteredModels) {
 			if (isFavourite(model.provider, model.id, favourites)) {
 				favModels.push(model);
 			} else {
@@ -84,7 +107,7 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 
 		// Build options list
 		const options: string[] = [];
-		const modelMap = new Map<string, typeof allModels[0]>();
+		const modelMap = new Map<string, typeof filteredModels[0]>();
 
 		if (favModels.length > 0) {
 			favModels.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
@@ -93,7 +116,9 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 				options.push(label);
 				modelMap.set(label, model);
 			}
-			options.push("---"); // Separator
+			if (regularByProvider.size > 0) {
+				options.push("---"); // Separator only if there are regular models too
+			}
 		}
 
 		const sortedProviders = [...regularByProvider.keys()].sort();
@@ -107,8 +132,12 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 				modelMap.set(label, model);
 			}
 		}
+		
+		const title = query 
+			? `Select model (${filteredModels.length} matches for "${searchQuery}")`
+			: `Select model (${filteredModels.length} total)`;
 
-		const choice = await ctx.ui.select("Select model", options);
+		const choice = await ctx.ui.select(title, options);
 		if (!choice || choice === "---") return;
 
 		const model = modelMap.get(choice);
@@ -124,7 +153,7 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 
 	// Ctrl+M shortcut
 	pi.registerShortcut("ctrl+m", {
-		description: "Open model selector with favourites at top",
+		description: "Search and select model (favourites at top)",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("This requires interactive mode", "error");
