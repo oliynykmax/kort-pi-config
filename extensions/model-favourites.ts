@@ -269,9 +269,9 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 		const currentModel = ctx.model;
 		const currentKey = currentModel ? formatModelKey(currentModel.provider, currentModel.id) : "";
 
-		const selector = new ModelSelector(items, currentKey || undefined);
+		await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+			const selector = new ModelSelector(items, currentKey || undefined);
 
-		await new Promise<void>((resolve) => {
 			selector.onSelect(async (value: string) => {
 				const [provider, modelId] = value.split("/");
 				const model = ctx.modelRegistry.find(provider, modelId);
@@ -283,10 +283,10 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 						ctx.ui.notify(`No API key for ${provider}`, "error");
 					}
 				}
-				resolve();
+				done();
 			});
 
-			selector.onCancel(() => resolve());
+			selector.onCancel(() => done());
 
 			selector.onToggleFavourite(async (value: string) => {
 				const [provider, modelId] = value.split("/");
@@ -304,7 +304,7 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 				selector.updateItems(newItems);
 			});
 
-			ctx.ui.custom(selector);
+			return selector;
 		});
 	}
 
