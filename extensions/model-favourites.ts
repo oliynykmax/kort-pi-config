@@ -308,7 +308,8 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 		});
 	}
 
-	pi.registerShortcut("ctrl+shift+l", {
+	// Override the built-in Ctrl+L model selector
+	pi.registerShortcut("ctrl+l", {
 		description: "Open model selector with favourites",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
@@ -319,7 +320,8 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("models", {
+	// Also provide /model command (singular) to match pi convention
+	pi.registerCommand("model", {
 		description: "Select a model (favourites at top, Ctrl+F to toggle)",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
