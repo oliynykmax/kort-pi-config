@@ -2,17 +2,17 @@
  * Model Favourites Extension
  *
  * Provides a custom model selector with favourites shown in a dedicated section at the top.
- * Press Ctrl+F to toggle the selected model as a favourite.
  *
  * Usage:
- * - Ctrl+Shift+L - opens model selector with favourites at top
- * - /models - same as Ctrl+Shift+L
- * - Ctrl+F - toggle selected model as favourite
+ * - Ctrl+M - opens model selector with favourites at top
+ * - /fav or /models - same as Ctrl+M
+ * - Ctrl+F (in selector) - toggle selected model as favourite
+ * - Built-in Ctrl+L still works for standard model selector
  */
 
 import { readFile, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import {
 	type Component,
 	Key,
@@ -308,8 +308,8 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 		});
 	}
 
-	// Override the built-in Ctrl+L model selector
-	pi.registerShortcut("ctrl+l", {
+	// Use Ctrl+M for model selector with favourites (Ctrl+L is built-in)
+	pi.registerShortcut("ctrl+m", {
 		description: "Open model selector with favourites",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
@@ -320,9 +320,9 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	// Also provide /model command (singular) to match pi convention
-	pi.registerCommand("model", {
-		description: "Select a model (favourites at top, Ctrl+F to toggle)",
+	// Use /fav or /models command (built-in is /model)
+	pi.registerCommand("fav", {
+		description: "Select a model with favourites (Ctrl+M or Ctrl+F to toggle)",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("This command requires interactive mode", "error");
@@ -364,6 +364,18 @@ export default function modelFavouritesExtension(pi: ExtensionAPI) {
 			}
 
 			await showModelSelector(ctx);
+		},
+	});
+
+	// Alias for convenience
+	pi.registerCommand("models", {
+		description: "Alias for /fav - select model with favourites",
+		handler: async (args, ctx) => {
+			// Just call the fav handler
+			const favCmd = pi.getCommand("fav");
+			if (favCmd) {
+				await favCmd.handler(args, ctx);
+			}
 		},
 	});
 
