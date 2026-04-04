@@ -86,6 +86,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify("Plan mode disabled. Full access restored.");
 		}
 		updateStatus(ctx);
+		persistState();
 	}
 
 	function persistState(): void {
@@ -230,7 +231,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				todoItems = [];
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
 				updateStatus(ctx);
-				persistState(); // Save cleared state so resume doesn't restore old execution mode
+				persistState();
 			}
 			return;
 		}
@@ -270,6 +271,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			executionMode = todoItems.length > 0;
 			pi.setActiveTools(NORMAL_MODE_TOOLS);
 			updateStatus(ctx);
+			persistState();
 
 			const execMessage =
 				todoItems.length > 0
@@ -335,6 +337,16 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		if (planModeEnabled) {
 			pi.setActiveTools(PLAN_MODE_TOOLS);
 		}
+		updateStatus(ctx);
+	});
+
+	// Clean up on session switch
+	pi.on("session_switch", async (_event, ctx) => {
+		// Reset state for new session
+		planModeEnabled = false;
+		executionMode = false;
+		todoItems = [];
+		pi.setActiveTools(NORMAL_MODE_TOOLS);
 		updateStatus(ctx);
 	});
 }

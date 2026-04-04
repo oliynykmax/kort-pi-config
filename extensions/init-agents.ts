@@ -204,8 +204,8 @@ function parsePackageJson(raw: string, facts: RepoFacts): void {
     if (!facts.purpose && typeof pkg.description === "string") {
       facts.purpose = pkg.description.trim();
     }
-  } catch {
-    // ignore malformed package.json
+  } catch (e) {
+    console.error("[init-agents] Failed to parse package.json:", e);
   }
 }
 
@@ -220,8 +220,8 @@ function inferPurpose(readme: string | null, packageJsonRaw: string | null, repo
     try {
       const pkg = JSON.parse(packageJsonRaw) as { description?: string };
       if (pkg.description?.trim()) return pkg.description.trim();
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("[init-agents] Failed to parse package.json for purpose:", e);
     }
   }
 
@@ -243,8 +243,8 @@ async function detectPackageManager(root: string, packageJsonRaw: string | null)
     try {
       const pkg = JSON.parse(packageJsonRaw) as { packageManager?: string };
       if (pkg.packageManager) return pkg.packageManager.split("@")[0];
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("[init-agents] Failed to parse package.json for package manager:", e);
     }
   }
 
@@ -266,8 +266,8 @@ async function getRepoRoot(pi: ExtensionAPI, cwd: string): Promise<string> {
   try {
     const result = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5000 });
     if (result.code === 0 && result.stdout.trim()) return result.stdout.trim();
-  } catch {
-    // ignore
+  } catch (e) {
+    console.error("[init-agents] Failed to get git repo root:", e);
   }
   return cwd;
 }
